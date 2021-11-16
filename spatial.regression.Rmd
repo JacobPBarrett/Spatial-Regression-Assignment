@@ -1,8 +1,8 @@
 ---
-title: "Spatial Regression: Alabama"
+title: "Spatial Regression: Socioeconomic factors and child poverty in Alabama (2016)"
 Author: "Jacob Barrett" 
 output:
-  html_notebook:
+  html_document: 
     df_print: paged
     rows.print: 10
     theme: cosmo
@@ -13,7 +13,7 @@ output:
       collapsed: no
       smooth_scroll: yes
   pdf_document: default
-  html_document: 
+  html_notebook:
     df_print: paged
     rows.print: 10
     theme: cosmo
@@ -29,16 +29,20 @@ editor_options:
 ---
 <body style="background-color:#99A3A4;">
 
-# Packages 
+# Packages used 
 
-```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+I had some difficulty installing a couple of the packages that were on the larger side, namely rgdal and sf. Quitting and restarting R was, for whatever reason, enough to fix the issue.
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE}
 packages <- c("biscale", "cleangeo", "cowplot", "dplyr", "geosphere", 
             "ggplot2", "maps", "maptools", "rgdal", "rgeos", "sf", 
             "sp", "spatialreg", "spdep", "tidyr")
 sapply(packages, require, character.only=T)
 ```
 
-## Call in data 
+# Data 
+
+Of course, used the same data as everyone else and renamed the "X2016.child.poverty" column. 
 
 ```{r data, include=TRUE, message=FALSE, warning=FALSE}
 data <- read.csv('./Data/childpov18_southfull.csv', 
@@ -56,13 +60,31 @@ names(data)[names(data)=="X2016.child.poverty"] <- "child.pov.2016"
 
 ## Subset for Alabama: 
 
+My chosen (?) state - Alabama! 
+
+I've never been to Alabama and it's not particularly high up on my travel wish-list. But, a quick Google search revealed some pretty interesting tourist attractions that I'd *consider* visiting Alabama to see! 
+
+**National Voting Rights Museum, Selma:**
+
+![](images/museum.jpg)
+
+**Weeks Bay National Estuarine Research Reserve, Mobile Bay:** 
+
+![](images/reserve.jpg){width=80%}
+
+**Birmingham Civil Rights Institute:**
+
+![](images/mlk.jpg){width=50%}
+
 ```{r subset data for Alabama, include=TRUE, message=FALSE, warning=FALSE}
 al_pov <- data %>% subset(State == "AL")
 
 summary(al_pov)
 ```
 
-# Ordinary Least Squares 
+# Ordinary Least Squares Analysis
+
+First, I created the equation to try and explain child poverty with our variables, as well as limited the scientific notation and ran the OLS. 
 
 ```{r OLS equation, include=TRUE, message=FALSE, warning=FALSE}
 equation <- child.pov.2016 ~ rural + urban + lnmanufacturing + lnag + 
@@ -76,11 +98,17 @@ ols <- lm(equation, data=al_pov)
 summary(ols)
 ```
 
-As we can see from our first analysis using ordinary least squares, child poverty in Alabama appears to be related strongly to whether or not the child is unemployed or hispanic, as well as single mother households and whether or not the famils has health insurance. 
+As we can see from our first analysis using ordinary least squares, child poverty in Alabama appears to be related strongly to four variables: employment of the child's parents in the healthcare industry, whether the child's parents are unemployed, single mothers and whether the child is of hispanic descent. 
+
+Of these four variables, unemployment is both the most significant and has the largest contribution to child poverty out of all of our examined variables. 
 
 # Contiguity 
 
+To test for spatial relationships in the data I used the "queens" case for neighbors. 
+
 ## Creating a list of neighbors 
+
+First, we need to add the FIPS column that will allow us to merge our spatial and poverty data by creating the set of polygons and their corresponding FIPS. The code below will also allow us to create a list of neighbors 
 
 ```{r contiguity neighbors, include=TRUE, message=FALSE, warning=FALSE}
 fips <- county.fips
@@ -91,7 +119,7 @@ alabama <- map(database = "county", regions = "alabama", fill=T, plot=F)
 alabama_sp = map2SpatialPolygons(alabama,al_fips$fips,CRS("+proj=longlat"))
 ```
 
-Next, clean the data: 
+I didn't actually observe any errors when creating the set of neighbors (because I didn't try it before cleaning it) but figured that cleaning the data anyway couldn't hurt: 
 
 ```{r clean the data, include=TRUE, message=FALSE, warning=FALSE}
 cleaned <- clgeo_Clean(alabama_sp)
@@ -99,25 +127,31 @@ neighb.data <- poly2nb(cleaned, queen=T)
 cont.neighb <- nb2listw(neighb.data,style="W", zero.policy = TRUE)
 ```
 
-Now we've officially created a spatial dataset and a list of neighbor - so, we're ready to see if there's any residual spatial dependence. 
+Now we've officially created a spatial dataset and a list of neighbors - so, we're ready to see if there's any residual spatial dependence. 
 
 ## Moran's Correlation / LaGrange Multiplier Tests 
+
+To begin testing whether or not spatial dependence is an important component to add to our model, I of course began by using a Moran's Correlation Test to examine the residuals from the OLS regression with the spatial relationship matrix we just created above. 
 
 ```{r Moran test, include=TRUE, message=FALSE, warning=FALSE}
 lm.morantest(ols, cont.neighb)
 ```
 
-Non-significant p-value... so, shouldn't be using a spatial model at all (no spatial depency detected).
+Non-significant p-value and therefore can't reject the null hypothesis (no spatial correlations in the residuals). So, it's likely not necessary to attempt a spatial model at all - the OLS results model the data fine!
 
-Let's move on to the LaGrange Multiplier test to see if that's any different (?)... 
+But, let's follow Dr. Luc Anselin's advice and use a LaGrange Multiplier Test to see the resulting estimates for the linear model tests: 
 
 ```{r LaGrange, include=TRUE, message=FALSE, warning=FALSE}
 lm.LMtests(ols, cont.neighb, test="all")
 ```
 
+With strictly non-significant p-values resulting from the LaGrange test we're led to believe that none of the models included in the test would be a suitable fit for modeling the socioeconomic factors we have for Alabama and how they correlate with child poverty. 
+
+So, we'll retain our OLS results and move onto mapping these (without incorporating an effect from neighbors into our model). 
+
 # Mapping 
 
-## Creating the output
+## Bivariate map of child poverty and unemployment 
 
 ```{r output, include=TRUE, message=FALSE, warning=FALSE}
 #dist.err.data <- summary(all.dist.err.k1, correlation=TRUE, Nagelkerke = TRUE)
@@ -149,7 +183,7 @@ bivariate_data_unemployed <- bi_class(al_poly, x = child_pov, y = unemployed,
 legend <- bi_legend(pal = "DkViolet",
                     dim = 3,
                     xlab = "Child Poverty",
-                    ylab = "Hispanic",
+                    ylab = "Unemployment",
                     size = 6)
 ```
 
@@ -194,3 +228,98 @@ final_unemployed_map <- ggdraw() +
 final_unemployed_map
 ```
 
+## Child poverty and hispanic descent 
+
+```{r hispanic racial variable, fig.height=8, fig.width=10, include=TRUE, message=FALSE, warning=FALSE}
+bivariate_data_hispanic <- bi_class(al_poly, x = child_pov, y = hispanic,
+                           dim = 3, style = "quantile")
+
+legend.hispanic <- bi_legend(pal = "DkViolet",
+                    dim = 3,
+                    xlab = "Child Poverty",
+                    ylab = "Hispanic",
+                    size = 6)
+
+hispanic_pov_map <- ggplot() + 
+  geom_polygon(data = world, aes(x=long,y=lat, group=group), fill = "gray95", color = "white") +
+  geom_polygon(data = states, aes(x=long,y=lat, group=group), fill = "gray", color = "white") +
+  geom_polygon(data = southern_states, aes(x=long,y=lat, group=group), fill = NA, size = 0.01, color = "white") +  
+  geom_polygon(data = bivariate_data_hispanic, aes(x=long, y=lat, group=group, fill = bi_class), color = "grey50", show.legend = FALSE) + 
+  bi_scale_fill(pal = "DkViolet", dim = 3) +
+  coord_map("conic", lat0 = 20, xlim=c(-91,-83), ylim=c(29,36)) +
+  theme_void() + theme(legend.title.align=0.5) +
+  theme(panel.background = element_rect(fill = 'deepskyblue'),
+        panel.grid.major = element_line(colour = NA)) +
+  labs(x = "Longitude", y = "Latitude", fill = "hispanic", 
+       title = "Bivariate Map of Child Poverty and a Racial Variable for Hispanic Descent") +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+final_hispanic_map <- ggdraw() +
+  draw_plot(hispanic_pov_map, 0, 0, 1, 1) +
+  draw_plot(legend.hispanic, 0.65, 0.035, 0.25, 0.25)
+final_hispanic_map
+```
+
+## Child poverty and single mother households 
+
+```{r single mother households map, fig.height=8, fig.width=10, include=TRUE, message=FALSE, warning=FALSE}
+bivariate_data_moms <- bi_class(al_poly, x = child_pov, y = single_mom,
+                           dim = 3, style = "quantile")
+
+legend.moms <- bi_legend(pal = "DkViolet",
+                    dim = 3,
+                    xlab = "Child Poverty",
+                    ylab = "Single Mother Households",
+                    size = 6)
+
+moms_pov_map <- ggplot() + 
+  geom_polygon(data = world, aes(x=long,y=lat, group=group), fill = "gray95", color = "white") +
+  geom_polygon(data = states, aes(x=long,y=lat, group=group), fill = "gray", color = "white") +
+  geom_polygon(data = southern_states, aes(x=long,y=lat, group=group), fill = NA, size = 0.01, color = "white") +  
+  geom_polygon(data = bivariate_data_moms, aes(x=long, y=lat, group=group, fill = bi_class), color = "grey50", show.legend = FALSE) + 
+  bi_scale_fill(pal = "DkViolet", dim = 3) +
+  coord_map("conic", lat0 = 20, xlim=c(-91,-83), ylim=c(29,36)) +
+  theme_void() + theme(legend.title.align=0.5) +
+  theme(panel.background = element_rect(fill = 'deepskyblue'),
+        panel.grid.major = element_line(colour = NA)) +
+  labs(x = "Longitude", y = "Latitude", fill = "single_moms", 
+       title = "Bivariate Map of Child Poverty and Single Mother Households") +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+final_moms_map <- ggdraw() +
+  draw_plot(moms_pov_map, 0, 0, 1, 1) +
+  draw_plot(legend.moms, 0.65, 0.035, 0.25, 0.25)
+final_moms_map
+```
+
+## Child poverty and emplyment in the healthcare industry 
+
+```{r health care industry employment, fig.height=8, fig.width=10, include=TRUE, message=FALSE, warning=FALSE}
+bivariate_data_health <- bi_class(al_poly, x = child_pov, y = healthss,
+                           dim = 3, style = "quantile")
+
+legend.health <- bi_legend(pal = "DkViolet",
+                    dim = 3,
+                    xlab = "Child Poverty",
+                    ylab = "Healthcare Employment",
+                    size = 6)
+
+health_pov_map <- ggplot() + 
+  geom_polygon(data = world, aes(x=long,y=lat, group=group), fill = "gray95", color = "white") +
+  geom_polygon(data = states, aes(x=long,y=lat, group=group), fill = "gray", color = "white") +
+  geom_polygon(data = southern_states, aes(x=long,y=lat, group=group), fill = NA, size = 0.01, color = "white") +  
+  geom_polygon(data = bivariate_data_health, aes(x=long, y=lat, group=group, fill = bi_class), color = "grey50", show.legend = FALSE) + 
+  bi_scale_fill(pal = "DkViolet", dim = 3) +
+  coord_map("conic", lat0 = 20, xlim=c(-91,-83), ylim=c(29,36)) +
+  theme_void() + theme(legend.title.align=0.5) +
+  theme(panel.background = element_rect(fill = 'deepskyblue'),
+        panel.grid.major = element_line(colour = NA)) +
+  labs(x = "Longitude", y = "Latitude", fill = "healthss", 
+       title = "Bivariate Map of Child Poverty and Employment in the Healthcare Industry") +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5)) 
+
+final_health_map <- ggdraw() +
+  draw_plot(health_pov_map, 0, 0, 1, 1) +
+  draw_plot(legend.health, 0.65, 0.035, 0.25, 0.25) 
+final_health_map
+```
